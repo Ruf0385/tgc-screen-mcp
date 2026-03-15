@@ -38,21 +38,29 @@ export async function launchTgc2019() {
 
 /**
  * Send one or more keystrokes to TGC 2019 via PowerShell SendKeys.
- * Activates the TGC window first, then sends each key in sequence.
+ * Activates the TGC window first, then sends each key in sequence
+ * with a delay between each for TGC to register them.
  */
-export async function sendKeysToTgc(keys: string[], delayMs: number = 150): Promise<{ stdout: string; stderr: string; activated: boolean }> {
-  const sendLines = keys.map((k) => `$wshell.SendKeys('${k}')`);
-  const delayLine = delayMs > 0 ? `Start-Sleep -Milliseconds ${delayMs}` : "";
+export async function sendKeysToTgc(keys: string[], delayBetweenMs: number = 100): Promise<{ stdout: string; stderr: string; activated: boolean }> {
+  // Build script that sends each key with a delay between them
+  const sendLines: string[] = [];
+  for (let i = 0; i < keys.length; i++) {
+    sendLines.push(`$wshell.SendKeys('${keys[i]}')`);
+    // Add delay between keys (not after the last one)
+    if (i < keys.length - 1 && delayBetweenMs > 0) {
+      sendLines.push(`Start-Sleep -Milliseconds ${delayBetweenMs}`);
+    }
+  }
 
   const script = [
     "$wshell = New-Object -ComObject WScript.Shell",
     "$titles = @('The Golf Club', 'The Golf Club™ 2019', 'PGA TOUR')",
     "$activated = $false",
     "foreach ($title in $titles) { if ($wshell.AppActivate($title)) { $activated = $true; break } }",
-    delayLine,
+    "Start-Sleep -Milliseconds 100",
     ...sendLines,
     "if ($activated) { Write-Output 'KEYS_SENT_TO_TGC' } else { Write-Output 'KEYS_SENT_TO_ACTIVE_WINDOW' }",
-  ].filter(Boolean).join('; ');
+  ].join('; ');
 
   const { stdout, stderr } = await runCommand(
     "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe",
