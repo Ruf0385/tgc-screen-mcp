@@ -8,13 +8,15 @@ import { registerTools } from "./tools/register.js";
 
 const server = new McpServer({
   name: "tgc-screen-mcp",
-  version: "1.0.0",
+  version: "1.1.0",
 });
 
 function parseArgs() {
   const args = process.argv.slice(2);
   let port: number | null = null;
   let host = "0.0.0.0";
+  let voice = false;
+  let voicePort = 3200;
 
   for (let i = 0; i < args.length; i++) {
     if ((args[i] === "--port" || args[i] === "-p") && args[i + 1]) {
@@ -23,24 +25,37 @@ function parseArgs() {
     } else if ((args[i] === "--host" || args[i] === "-h") && args[i + 1]) {
       host = args[i + 1];
       i++;
+    } else if (args[i] === "--voice" || args[i] === "-v") {
+      voice = true;
+      // Check if next arg is a port number
+      if (args[i + 1] && !args[i + 1].startsWith("-")) {
+        voicePort = parseInt(args[i + 1], 10);
+        i++;
+      }
     } else if (args[i] === "--help") {
       console.log(`tgc-screen-mcp — MCP server for The Golf Club 2019
 
 Usage:
   tgc-screen-mcp                    Start in stdio mode (for local MCP clients)
   tgc-screen-mcp --port 3100        Start in HTTP/SSE mode (for remote clients)
-  tgc-screen-mcp -p 3100 -h 0.0.0.0  Specify host and port
+  tgc-screen-mcp --voice            Start Voice Caddy on port 3200
+  tgc-screen-mcp --voice 3300       Start Voice Caddy on custom port
 
 Options:
   --port, -p <port>    Run as HTTP/SSE server on this port
   --host, -h <host>    Bind address (default: 0.0.0.0)
+  --voice, -v [port]   Start Voice Caddy web UI (default port: 3200)
   --help               Show this help message
+
+Environment:
+  OPENAI_API_KEY       Required for --voice mode
+  REALTIME_MODEL       OpenAI Realtime model (default: gpt-4o-mini-realtime-preview)
 `);
       process.exit(0);
     }
   }
 
-  return { port, host };
+  return { port, host, voice, voicePort };
 }
 
 async function startStdio() {
@@ -121,9 +136,17 @@ async function startHttp(port: number, host: string) {
 }
 
 async function main() {
-  const { port, host } = parseArgs();
+  const { port, host, voice, voicePort } = parseArgs();
 
-  if (port !== null) {
+  if (voice) {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      console.error("Error: OPENAI_API_KEY environment variable is required for --voice mode");
+      process.exit(1);
+    }
+    const { startVoiceServer } = await import("./voice/server.js");
+    startVoiceServer(voicePort, apiKey);
+  } else if (port !== null) {
     await startHttp(port, host);
   } else {
     await startStdio();

@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TGC Voice Caddy</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0a0f1a;
+      color: #e0e0e0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 20px;
+    }
+    h1 { font-size: 1.8rem; margin-bottom: 8px; color: #4ade80; }
+    .subtitle { color: #888; margin-bottom: 30px; font-size: 0.9rem; }
+    
+    #mic-btn {
+      width: 120px; height: 120px;
+      border-radius: 50%;
+      border: 3px solid #333;
+      background: #1a1f2e;
+      color: #4ade80;
+      font-size: 3rem;
+      cursor: pointer;
+      transition: all 0.3s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #mic-btn:hover { border-color: #4ade80; background: #1f2937; }
+    #mic-btn.active {
+      border-color: #ef4444;
+      background: #1f1520;
+      animation: pulse 1.5s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+      50% { box-shadow: 0 0 0 20px rgba(239, 68, 68, 0); }
+    }
+    
+    #status {
+      margin-top: 20px;
+      padding: 10px 20px;
+      border-radius: 8px;
+      background: #1a1f2e;
+      font-size: 0.9rem;
+      min-width: 200px;
+      text-align: center;
+    }
+    #status.connected { border-left: 3px solid #4ade80; }
+    #status.error { border-left: 3px solid #ef4444; }
+    
+    #transcript {
+      margin-top: 20px;
+      padding: 15px;
+      border-radius: 8px;
+      background: #111827;
+      width: 100%;
+      max-width: 500px;
+      min-height: 100px;
+      max-height: 300px;
+      overflow-y: auto;
+      font-size: 0.85rem;
+      line-height: 1.6;
+    }
+    .user-text { color: #60a5fa; }
+    .ai-text { color: #4ade80; }
+    .tool-text { color: #f59e0b; font-style: italic; font-size: 0.8rem; }
+    
+    .controls {
+      margin-top: 15px;
+      display: flex;
+      gap: 10px;
+    }
+    .controls select, .controls button {
+      padding: 6px 12px;
+      border-radius: 6px;
+      border: 1px solid #333;
+      background: #1a1f2e;
+      color: #e0e0e0;
+      font-size: 0.8rem;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <h1>🏌️ TGC Voice Caddy</h1>
+  <p class="subtitle">Talk to control The Golf Club 2019</p>
+  
+  <button id="mic-btn" onclick="toggleMic()">🎙️</button>
+  
+  <div id="status">Click mic to start</div>
+  
+  <div id="transcript"></div>
+  
+  <script>
+    let ws = null;
+    let audioCtx = null;
+    let micStream = null;
+    let micProcessor = null;
+    let isActive = false;
+    let playbackQueue = [];
+    let isPlaying = false;
+
+    function setStatus(text, cls = '') {
+      const el = document.getElementById('status');
+      el.textContent = text;
+      el.className = cls;
+    }
+
+    function addTranscript(text, cls) {
+      const el = document.getElementById('transcript');
+      const p = document.createElement('div');
+      p.className = cls;
+      p.textContent = text;
+      el.appendChild(p);
+      el.scrollTop = el.scrollHeight;
+    }
+
+    async function toggleMic() {
+      if (isActive) {
+        stopSession();
+      } else {
+        await startSession();
+      }
+    }
+
+    async function startSession() {
+      try {
+        setStatus('Connecting...', '');
+        
+        // Get mic permission
+        micStream = await navigator.mediaDevices.getUserMedia({ 
+          audio: { 
+            sampleRate: 24000, 
+            channelCount: 1,
+            echoCancellation: true,
+            noiseSuppression: true 
+          } 
+        });
+
+        // Audio context for playback and capture
+        audioCtx = new AudioContext({ sampleRate: 24000 });
+
+        // Connect to our voice relay server
+        const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+        ws = new WebSocket(`${proto}://${location.host}/ws`);
+
+        ws.onopen = () => {
+          setStatus('🟢 Connected — speak!', 'connected');
+          document.getElementById('mic-btn').classList.add('active');
+          isActive = true;
+          startMicCapture();
+        };
+
+        ws.onmessage = (event) => {
+          const data = JSON.parse(event.data);
+          handleServerEvent(data);
+        };
+
+        ws.onerror = (err) => {
+          setStatus('Connection error', 'error');
+          console.error('WebSocket error:', err);
+        };
+
+        ws.onclose = () => {
+          setStatus('Disconnected', 'error');
+          stopSession();
+        };
+
+      } catch (err) {
+        setStatus(`Error: ${err.message}`, 'error');
+        console.error(err);
+      }
+    }
+
+    function stopSession() {
+      isActive = false;
+      document.getElementById('mic-btn').classList.remove('active');
+      
+      if (micProcessor) { micProcessor.disconnect(); micProcessor = null; }
+      if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+      if (ws) { ws.close(); ws = null; }
+      if (audioCtx) { audioCtx.close(); audioCtx = null; }
+      
+      setStatus('Click mic to start');
+    }
+
+    function startMicCapture() {
+      if (!audioCtx || !micStream) return;
+
+      const source = audioCtx.createMediaStreamSource(micStream);
+      micProcessor = audioCtx.createScriptProcessor(4096, 1, 1);
+
+      micProcessor.onaudioprocess = (e) => {
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+        const float32 = e.inputBuffer.getChannelData(0);
+        // Convert float32 to int16 PCM
+        const int16 = new Int16Array(float32.length);
+        for (let i = 0; i < float32.length; i++) {
+          const s = Math.max(-1, Math.min(1, float32[i]));
+          int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+        }
+
+        // Send as base64 audio buffer
+        const bytes = new Uint8Array(int16.buffer);
+        const base64 = btoa(String.fromCharCode(...bytes));
+        
+        ws.send(JSON.stringify({
+          type: 'input_audio_buffer.append',
+          audio: base64
+        }));
+      };
+
+      source.connect(micProcessor);
+      micProcessor.connect(audioCtx.destination);
+    }
+
+    function handleServerEvent(event) {
+      switch (event.type) {
+        case 'session.created':
+          console.log('Session created');
+          break;
+
+        case 'response.audio.delta':
+          // Queue audio for playback
+          if (event.delta) {
+            queueAudio(event.delta);
+          }
+          break;
+
+        case 'response.audio_transcript.delta':
+          // AI speaking transcript (live)
+          break;
+
+        case 'response.audio_transcript.done':
+          if (event.transcript) {
+            addTranscript(`🤖 ${event.transcript}`, 'ai-text');
+          }
+          break;
+
+        case 'conversation.item.input_audio_transcription.completed':
+          if (event.transcript) {
+            addTranscript(`🎙️ ${event.transcript}`, 'user-text');
+          }
+          break;
+
+        case 'response.function_call_arguments.done':
+          addTranscript(`⚡ ${event.name}(${event.arguments})`, 'tool-text');
+          break;
+
+        case 'error':
+          setStatus(`Error: ${event.error?.message || event.message || 'Unknown'}`, 'error');
+          console.error('Server error:', event);
+          break;
+      }
+    }
+
+    function queueAudio(base64Data) {
+      // Decode base64 to Int16 PCM
+      const binaryStr = atob(base64Data);
+      const bytes = new Uint8Array(binaryStr.length);
+      for (let i = 0; i < binaryStr.length; i++) {
+        bytes[i] = binaryStr.charCodeAt(i);
+      }
+      const int16 = new Int16Array(bytes.buffer);
+
+      // Convert Int16 to Float32 for Web Audio
+      const float32 = new Float32Array(int16.length);
+      for (let i = 0; i < int16.length; i++) {
+        float32[i] = int16[i] / 0x8000;
+      }
+
+      playbackQueue.push(float32);
+      if (!isPlaying) playNext();
+    }
+
+    function playNext() {
+      if (!audioCtx || playbackQueue.length === 0) {
+        isPlaying = false;
+        return;
+      }
+
+      isPlaying = true;
+      const samples = playbackQueue.shift();
+      const buffer = audioCtx.createBuffer(1, samples.length, 24000);
+      buffer.getChannelData(0).set(samples);
+
+      const source = audioCtx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(audioCtx.destination);
+      source.onended = playNext;
+      source.start();
+    }
+  </script>
+</body>
+</html>
