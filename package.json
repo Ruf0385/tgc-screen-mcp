@@ -1,7 +1,7 @@
 {
   "name": "tgc-screen-mcp",
-  "version": "1.0.0",
-  "description": "MCP server for controlling The Golf Club 2019 — launch, screen capture, OCR, and keyboard input via WSL↔Windows interop",
+  "version": "1.1.0",
+  "description": "MCP server for controlling The Golf Club 2019 — launch, screen capture, OCR, keyboard input, and voice control via WSL↔Windows interop",
   "author": "Adam Ruf <ruf0385@gmail.com>",
   "license": "MIT",
   "private": false,
@@ -11,8 +11,10 @@
     "tgc-screen-mcp": "dist/index.js"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node -e \"const fs=require('fs');const f='dist/index.js';let c=fs.readFileSync(f,'utf8');if(!c.startsWith('#!'))fs.writeFileSync(f,'#!/usr/bin/env node\\n'+c);fs.chmodSync(f,0o755)\"",
+    "prepare": "npm run build",
     "start": "node dist/index.js",
+    "start:http": "node dist/index.js --port 3100",
     "dev": "tsc --watch"
   },
   "dependencies": {
@@ -31,6 +33,12 @@
     "screen-capture",
     "ocr",
     "automation",
-    "simulator"
-  ]
+    "simulator",
+    "voice-control",
+    "golf-simulator"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Ruf0385/tgc-screen-mcp.git"
+  }
 }
